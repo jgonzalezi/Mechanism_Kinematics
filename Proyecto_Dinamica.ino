@@ -8,11 +8,10 @@
 // Pin definition
 const unsigned int IN1 = 4;
 const unsigned int IN2 = 2;
-const unsigned int EN = 3;
 
 
 // Create one motor instance
-L298N motor(EN, IN1, IN2);
+L298N motor(IN1, IN2);
 
 // Define the sensor objects with the library
 VL53L0X tofsensor;
@@ -20,8 +19,9 @@ Adafruit_MPU6050 mpu;
 
 const long runtime = 50; // Sensor reading interval, seconds
 unsigned long currentTime = millis();
+int movetime = 0;
 
-// Contains the same thing as setup, it is to avoid calling setup
+// Contains the setup routine except for the comms. Improves readability
 void startup(){
   // MPU6050 initialization
   if (!mpu.begin()) {
@@ -49,56 +49,32 @@ void startup(){
   
   // Wait for a start signal from the user
   char startSignal = Serial.read();
+  
 
-
-  if (startSignal == 's'){
-    loop();
+ while (1){ 
+    char startSignal = Serial.read();
+    if (startSignal == 's'){
+      //Serial.println("The arduino program has started");
+      while(1){
+        //Serial.println("Please input the time in ms: ");
+        movetime = Serial.parseInt();
+        if (movetime > 0){
+          //Serial.println("TIME RECEIVED");
+          break;
+        }
+      }
+      //Serial.println("Starting loop");
+      break;
+    }
   }
 
   delay(2000);
 }
 
 void setup(){
-  //Motor speed is set fixed here (temporarily) to avoid mishaps
   Serial.begin(250000);
   Wire.begin();
-  motor.setSpeed(40);
-  
-  // MPU6050 initialization
-  if (!mpu.begin()) {
-    Serial.println("Failed to find MPU6050 chip");
-    while (1) {
-      delay(10);
-    }
-  }
-  //Serial.println("MPU6050 Inertial Measuring Unit Found!");
-
-  // ToF Sensor initialization and timeout
-  tofsensor.setTimeout(600);
-  if (!tofsensor.init())
-  {
-    Serial.println("Failed to detect and initialize tofsensor!");
-    while (1) {}
-  }
-
-  // Selection of MPU opereating modes (measuring ranges)
-  mpu.setAccelerometerRange(MPU6050_RANGE_4_G);
-  // Selection of MPU6050 angular velocity range
-  mpu.setGyroRange(MPU6050_RANGE_250_DEG);
-  // Activation and selection of MPU6050 filter bandwith
-  mpu.setFilterBandwidth(MPU6050_BAND_260_HZ);
-  
-  // Wait for a start signal from the user
-  char startSignal = Serial.read();
-
-
-  if (startSignal == 's'){
-    loop();
-  }
-  else{
-    startup();
-  }
-
+  startup();
   delay(2000);
 }
 
@@ -120,8 +96,6 @@ void readsensors(){
 
     /*Print out the values */
     //Serial.print("Distance: ");
-    Serial.print(currentTime, 4);
-    Serial.print(",");
     Serial.print(r);
     Serial.print(",");
     Serial.print(accel, 4);
@@ -133,6 +107,7 @@ void readsensors(){
 
 const long reading_interval = 50; // Sensor reading interval, milliseconds
 unsigned long previousMillis = 0;  // will store last time sensor readings were updated
+int times_ran = 0; //This variable keeps track of the times the loop has ran. It simplifies the timing
 
 void loop()
 {
@@ -141,10 +116,21 @@ void loop()
 
     // If the interval has passed, then output the move signal and read the sensors
     if (currentMillis - previousMillis >= reading_interval){
-    // Update the time
-    previousMillis = currentMillis;
-    motor.forward();
+    
+    previousMillis = currentMillis; // Update the time
     readsensors();
+    motor.forward();     
+    times_ran += 1; //We update the times the data collection has ran
+
+    // We multiply times ran * read interval to get the time the mechanism has been moving and reading
+    // If its bigger or equal to the defined moving time, we stop. (We do 10% more time just in case)
+    if (times_ran * reading_interval >= movetime*1.1){
+      Serial.println(times_ran);
+      motor.stop();
+      Serial.end();
+      times_ran = 0; // We reset the times ran. Since it is a global variable, not resetting it causes glitches
+      setup();  // Go back to the setup, wait for new data
+    }
   }
   
 }

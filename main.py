@@ -1,10 +1,10 @@
 # These libraries handle the serial comms with the arduino
 import serial, time
 
-# Regular expressions library will be used for dealing with the newline characters in the serial monitor
+# Regular expressions library is used for dealing with the newline characters in the serial monitor
 import re
 
-# NumPy will be used to handle the different computations (speeds, positions, etc). It is imported as np by convention
+# NumPy handles the different computations (speeds, positions, etc). It is imported as np by convention
 # Note: Numpy handles numerical and array computations, similar to matlab. Be careful when operating with scalars
 import numpy as np
 
@@ -13,201 +13,82 @@ import numpy as np
 from scipy import integrate
 from scipy import signal
 
-# Matplotlib will handle data visualization
+# Matplotlib handles data visualization
 import matplotlib.pyplot as plt
 
 
-import serial
-from everywhereml.arduino import Sketch, Ino, H
 
-movetime = int(input("Please enter the desired movement time, in seconds (integer): "))
-#motorspeed = int(input("Please enter the desired motor speed in percentage: "))
-
-sketch = Sketch(name="PyDuino")
-sketch += Ino('''
-#include <Wire.h>
-#include <VL53L0X.h>
-#include <Adafruit_MPU6050.h>
-#include <Adafruit_Sensor.h>
-// Include the library
-#include <L298N.h>
-
-// Pin definition
-const unsigned int IN1 = 4;
-const unsigned int IN2 = 2;
-const unsigned int EN = 3;
-
-
-// Create one motor instance
-L298N motor(EN, IN1, IN2);
-
-// Define the sensor objects with the library
-VL53L0X tofsensor;
-Adafruit_MPU6050 mpu;
-
-
-void start(){
-  //Motor speed is set fixed here (temporarily) to avoid mishaps
-  Serial.begin(250000);
-  Wire.begin();
-  motor.setSpeed(40);
-  
-  // MPU6050 initialization
-  if (!mpu.begin()) {
-    Serial.println("Failed to find MPU6050 chip");
-    while (1) {
-      delay(10);
-    }
-  }
-  //Serial.println("MPU6050 Inertial Measuring Unit Found!");
-
-  // ToF Sensor initialization and timeout
-  tofsensor.setTimeout(500);
-  if (!tofsensor.init())
-  {
-    Serial.println("Failed to detect and initialize tofsensor!");
-    while (1) {}
-  }
-
-  // Selection of MPU opereating modes (measuring ranges)
-  mpu.setAccelerometerRange(MPU6050_RANGE_4_G);
-  // Selection of MPU6050 angular velocity range
-  mpu.setGyroRange(MPU6050_RANGE_250_DEG);
-  // Activation and selection of MPU6050 filter bandwith
-  mpu.setFilterBandwidth(MPU6050_BAND_260_HZ);
-  
-
-  // Wait for a start signal from the user
-  char startSignal = Serial.read();
-
-
-  if (startSignal == 's'){
-    loop();
-  }
-  else{
-    setup();
-  }
-  delay(1000);
-}
-
-void setup(){
-  start();
-}
-
-void readsensors(){
-  /* Read the MPU current values the values that matter for this task are acceleration
-    x and y, and angular velocity in z */
-    sensors_event_t a, g, temp;
-    mpu.getEvent(&a, &g, &temp);
-    double a_x = a.acceleration.x; //Establish variables to get values out of the struct
-    double a_y = a.acceleration.y;
-    double w_z = g.gyro.z + 0.14; //Set the zero offsets by adding them
-    double accel = hypot(a_x, a_y) - 1.297; 
-
-    // Read the ToF current values and establish timeout
-    double r = tofsensor.readRangeSingleMillimeters()-30;
-    if (tofsensor.timeoutOccurred()) { Serial.print("ToF TIMEOUT"); }
-
-    /*Print out the values */
-    //Serial.print("Distance: ");
-    Serial.print(r);
-    Serial.print(",");
-    Serial.print(accel);
-    Serial.print(",");
-    Serial.print(w_z);
-    Serial.print("\\n");
-}
-
-const long runtime = 3000;
-const long reading_interval = 50; // Sensor reading interval, milliseconds
-unsigned long previousMillis = 0;  // will store last time sensor readings were updated
-
-void loop()
-{
-  //This variable keeps track of the time since the arduino started
-  unsigned long currentMillis = millis();
-  unsigned long executionMillis = millis();
-
-    // If the interval has passed, then output the move signal and read the sensors
-    if (currentMillis - previousMillis >= reading_interval){
-    // Update the time
-    previousMillis = currentMillis;
-    motor.forward();
-    readsensors();
-  }
-  
-}
-
-
-  
-''')
-
-if sketch.compile(board='Arduino Mega or Mega').is_successful:
-    print('Log', sketch.output)
-    print('Sketch stats', sketch.stats)
-else:
-    print('ERROR', sketch.output)
-
-"""
-You can specify the exact port
-"""
-sketch.upload(port='COM7')
-
-
-######################################################
-# MAKE SURE BAUDS ARE EQUAL TO BAUDS IN ARDUINO CODE #
-######################################################
-arduino = serial.Serial('COM7', 250000, timeout=2)
-print("Connected to arduino uno (master)")
+#############################################
+# MAKE SURE BAUDS ARE EQUAL TO ARDUINO CODE #
+#############################################
+arduino = serial.Serial('COM9', 250000, timeout=1)
+print("Connected to arduino")
 time.sleep(1)
-
 
 start_signal = input("Start movement and measuring? y/n:")
 if start_signal == 'y':
+    movetime = input("Please enter the desired movement time, in milliseconds: ")
     arduino.write(b's')
-      
+    movetime = movetime.encode("utf-8")
+    arduino.write(movetime)
 
-# If we know the amount of samples to collect we can assign it
-# Remember, according to the Arduino code the board samples each 50 ms
-samples = 20 * movetime
 
-# Create numpy arrays to hold all the values to be read (a, r, omega)
-# Shape refers to the array size, in this case its unidimensional with shape = size = number of samples
-r = np.empty(shape=samples)
-a = np.empty(shape=samples)
-omega = np.empty(shape=samples)
+listoflists = []
+
+# Retrieve data from the arduino in the form of a list of lists
+# Each element is a line [r, a, omega]. Made into list to prevent empty elements. See comments below
+while 1:
+    
+    #Check if there is  data avaliable
+    if arduino.in_waiting >= 0:
+        
+        # Decode each line as ascii to get a string type object
+        data_string = arduino.readline().decode('ascii')
+
+        # The string is split by regex, in order to create a three element list [r, a, omega]
+        # The slicing operation [0:-1] eliminates an empty value that appears when the string is split at the end (\n)
+        data_string = re.split(',|\n',data_string)[0:-1]
+
+        # Check if data collection has ended since at the end the arduino will print out a single number (# of samples)
+        if data_string.__len__() == 1:
+            samples = int(data_string[0])
+            break        
+        print(data_string)
+        listoflists.append(data_string)
+
+        # Eliminate empty elements of the list so delays in serial communication will not affect the readings
+        listoflists = [x for x in listoflists if x]
+        
+        print(listoflists)
+        print(listoflists.__len__())      
+
+# Extract single vectors with each parameter
+r = [item[0] for item in listoflists]
+a = [item[1] for item in listoflists]
+omega = [item[2] for item in listoflists]
+
+# Convert them to lists of floats, since its all strings up to this point
+r = [float(item) for item in r]
+a = [float(item) for item in a]
+omega = [float(item) for item in omega]
+
 
 # Create a numpy array to hold the time for easy plotting. Since we know each sample occurs each 50ms
 # That is every 0.05 s. We can then fill it with a quick for loop to obtain the time vector in a simple fashion
 t = np.empty(shape=samples)
-
 t_0 = 0
 for i in range(0,samples):
     t[i] = t_0
     t_0 = t_0 + 0.05
 
 
-for i in range(0,samples):
 
-    # We should read each data line from the arduino. It is decoded as ascii to get a string type object
-    data_string = arduino.readline().decode('ascii')
+# Create numpy arrays to hold all the values to be read (a, r, omega)
+# Shape refers to the array size, in this case its unidimensional with shape = size = number of samples
+r = np.array(r)
+a = np.array(a)
+omega = np.array(omega)
 
-    # The string is split by regex, in order to create a three element list [r, a, omega]
-    # The slicing operation [0:-1] eliminates an empty value that appears when the string is split at the end (\n)
-    data_string = re.split(',|\n',data_string)[0:-1]
-    print(data_string)
-
-    # Assign, for the current iteration, the values of the numpy arrays r, a, omega
-    if [ r[i], a[i], omega[i] ] == []:
-      continue
-    r[i] = data_string[0]
-    a[i] = data_string[1]
-    omega[i] = data_string[2]
-
-
-print(r)
-print(a)
-print(omega)
 
 # PENDING: Filter the data using SciPy libs
 r = signal.medfilt(r)
